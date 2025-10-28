@@ -46,10 +46,7 @@ def login(email: str, password: str, db: Session = Depends(get_db)):
 
 # ------------------ Google Auth ------------------
 @app.post("/google-auth")
-def google_auth(google_token: str, db: Session = Depends(get_db)):
-    """
-    Expects an ID token from Google Sign-In (frontend sends this).
-    """
+def google_auth(google_token: str, public_key: str = None, db: Session = Depends(get_db)):
     resp = requests.get(f"https://oauth2.googleapis.com/tokeninfo?id_token={google_token}")
     if resp.status_code != 200:
         raise HTTPException(status_code=400, detail="Invalid Google token")
@@ -58,15 +55,23 @@ def google_auth(google_token: str, db: Session = Depends(get_db)):
     google_id = data["sub"]
     email = data.get("email")
 
-    user = db.query(User).filter((User.google_id == google_id) | (User.email == email)).first()
+    user = db.query(User).filter(
+        (User.google_id == google_id) | (User.email == email)
+    ).first()
 
     if not user:
-        user = User(email=email, google_id=google_id)
+        user = User(email=email, google_id=google_id, public_key=public_key)
         db.add(user)
         db.commit()
         db.refresh(user)
+    else:
+        # Optional: update the public key if the user provides a new one
+        if public_key and not user.public_key:
+            user.public_key = public_key
+            db.commit()
 
     return {"user_id": user.id}
+
 
 @app.get("/health")
 def health_check():
