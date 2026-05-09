@@ -2,8 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import Base, engine, SessionLocal
 from model import User
-from auth_utils import hash_password, verify_password
-import requests
+from pydantic import BaseModel
 
 Base.metadata.create_all(bind=engine)
 
@@ -17,70 +16,67 @@ def get_db():
         db.close()
 
 
-# ------------------ Signup ------------------
-@app.post("/signup")
-def signup(email: str, password: str, public_key: str, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.email == email).first()
+class UserCreate(BaseModel):
+    username: str
+    name: str = None
+    details: str = None
+    address: str = None
+    public_key: str
+
+@app.post("/register")
+def register_user(user: UserCreate, db: Session = Depends(get_db)):
+    """Register a new user and generate a 12-digit UID"""
+    existing = db.query(User).filter(User.username == user.username).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Email already exists")
+        raise HTTPException(status_code=400, detail="Username already exists")
 
-    user = User(email=email, password=hash_password(password), public_key=public_key)
-    db.add(user)
+    new_user = User(
+        username=user.username,
+        name=user.name,
+        details=user.details,
+        address=user.address,
+        public_key=user.public_key
+    )
+    db.add(new_user)
     db.commit()
-    db.refresh(user)
-    return {"user_id": user.id}
+    db.refresh(new_user)
+    
+    return {
+        "message": "User registered successfully",
+        "user_id": new_user.id,
+        "username": new_user.username
+    }
 
 
-# ------------------ Login ------------------
-@app.post("/login")
-def login(email: str, password: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email).first()
-    if not user or not user.password:
-        raise HTTPException(status_code=400, detail="Invalid credentials")
-
-    if not verify_password(password, user.password):
-        raise HTTPException(status_code=400, detail="Incorrect password")
-
-    return {"user_id": user.id}
-
-
-# ------------------ Google Auth ------------------
-@app.post("/google-auth")
-def google_auth(google_token: str, public_key: str = None, db: Session = Depends(get_db)):
-    resp = requests.get(f"https://oauth2.googleapis.com/tokeninfo?id_token={google_token}")
-    if resp.status_code != 200:
-        raise HTTPException(status_code=400, detail="Invalid Google token")
-
-    data = resp.json()
-    google_id = data["sub"]
-    email = data.get("email")
-
-    user = db.query(User).filter(
-        (User.google_id == google_id) | (User.email == email)
-    ).first()
-
+@app.get("/get_user_key")
+def get_user_key(user_id: str, db: Session = Depends(get_db)):
+    """Fetch the public key of a user by their user_id (UID)"""
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        user = User(email=email, google_id=google_id, public_key=public_key)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    else:
-        # Optional: update the public key if the user provides a new one
-        if public_key and not user.public_key:
-            user.public_key = public_key
-            db.commit()
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.public_key:
+        raise HTTPException(status_code=400, detail="User does not have a public key configured")
+    
+    # Returning the public key. It is expected to be a 128-character hex string.
+    return {"public_key": user.public_key}
 
-    return {"user_id": user.id}
+
+@app.get("/user/{user_id}")
+def get_user_details(user_id: str, db: Session = Depends(get_db)):
+    """Fetch basic details of a user by their UID"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {
+        "user_id": user.id,
+        "username": user.username,
+        "name": user.name,
+        "details": user.details,
+        "address": user.address
+    }
 
 
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
-
-@app.get("/server_public_key")
-def get_public_key():
-    return {"public_key": "your_public_key_here"}
-
-@app.get("/")
-def read_root():
-    return {"login":"/login", "signup":"/signup", "google_auth":"/google-auth", "health":"/health", "server_public_key":"/server_public_key"}

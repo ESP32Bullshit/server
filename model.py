@@ -1,12 +1,18 @@
 from sqlalchemy import Column, String
 from database import Base
-import uuid
+import random
+import string
+
+def generate_12_digit_uid():
+    return ''.join(random.choices(string.digits, k=12))
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    email = Column(String, unique=True, nullable=False)
-    password = Column(String, nullable=True)
-    google_id = Column(String, unique=True, nullable=True)
+    # 12-digit auto-generated user-id
+    id = Column(String(12), primary_key=True, default=generate_12_digit_uid)
+    username = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=True)
+    details = Column(String, nullable=True)
+    address = Column(String, nullable=True)
     public_key = Column(String, nullable=True)
